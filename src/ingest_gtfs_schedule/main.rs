@@ -1196,20 +1196,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         &route_label
                                          ]).await.unwrap();
                                         }
-                                        let routes: HashMap<(String, String), (&Route, &PooledConnection<PostgresConnectionManager<NoTls>>)> = gtfs.routes.iter()
-                                            .map(|(key, route)| ((key.clone(), feed.id.clone()), (route, &client))).collect();
-                                        let routes_clone = routes.clone();
-                                        let route_workers = routes_clone.into_iter().map( |((route_id, feed_id), (route, client))| async move {
+                                        let shapes_per_route: HashMap<String, Vec<String>> = HashMap::new();
+
+                                        for (route_id, route) in &gtfs.routes {
                                             let route_type_number = route_type_to_int(&route.route_type);
-                                            let shapes_per_route: HashMap<String, Vec<String>> = HashMap::new();
+        
                                             let mut shape_id_array: Vec<String> =
-                                                match shapes_per_route.get(&route_id) {
+                                                match shapes_per_route.get(route_id) {
                                                     Some(shape_list) => shape_list.clone(),
                                                     None => vec![],
                                                 };
+        
                                             shape_id_array.dedup();
+        
                                             let shape_id_array = shape_id_array;
-                                            //println!("uploading route {:?} {}", &feed.id , &route_id);
+        
+                                                //println!("uploading route {:?} {}", &feed.id , &route_id);
+
                                             let route_prepared = client.prepare(format!("INSERT INTO {schemaname}.routes
                                             (
                                                 route_id,
@@ -1229,18 +1232,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             )
                                             VALUES (
                                                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-                                            ) ON CONFLICT (onestop_feed_id, route_id) do update set 
-                                            color = $10,
-                                            text_color = $11;
+                                            ) ON CONFLICT do nothing;
                                             ").as_str()).await.unwrap();
+        
                                             let mut long_name = route.long_name.clone();
+
                                             titlecase_process(&mut long_name);
+
                                             client
                                             .query(
                                                 &route_prepared,
                                                 &[
                                                     &route_id,
-                                                    &feed_id,
+                                                    &feed.id,
                                                     &route.short_name,
                                                     &long_name,
                                                     &route.desc.clone().unwrap_or_else(|| "".to_string()),
@@ -1248,8 +1252,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     &route.url,
                                                     &route.agency_id.clone().unwrap_or_else(|| "".to_string()),
                                                     &i32::try_from(route.order.unwrap_or_else(|| 0)).ok(),
-                                                    &(colour_correction::fix_background_colour_rgb_feed(&feed_id,route.color).to_string()),
-                                                    &(colour_correction::fix_foreground_colour_rgb_feed(&feed_id, route.color, route.text_color).to_string()),
+                                                    &(colour_correction::fix_background_colour_rgb(route.color).to_string()),
+                                                    &(colour_correction::fix_foreground_colour_rgb(route.color, route.text_color).to_string()),
                                                     &(match route.continuous_pickup {
                                                         ContinuousPickupDropOff::Continuous => 0,
                                                         ContinuousPickupDropOff::NotAvailable => 1,
@@ -1267,28 +1271,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     &shape_id_array,
                                                 ],
                                             ).await.unwrap();
-                                        });
-                                        for worker in route_workers {
-                                            let _ = tokio::join!(worker);
                                         }
+
                                         println!("Uploading {} trips", gtfs.trips.len());
                                          
                                         let time = std::time::Instant::now();
 
+                                        let statement = client.prepare(format!("INSERT INTO {schemaname}.trips (onestop_feed_id, trip_id, service_id, route_id, trip_headsign, trip_short_name, shape_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT do nothing;").as_str()).await.unwrap();
+
+                                        let stoptimestatement = client.prepare(
+                                            format!("INSERT INTO {schemaname}.stoptimes 
+                                            (onestop_feed_id, trip_id, stop_id, stop_sequence, 
+                                                arrival_time, departure_time, stop_headsign, point) 
+                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;").as_str()).await.unwrap();
 
                                         if skiptrips == false {
-                                            let trips: HashMap<(String, String), (&Trip, &PooledConnection<PostgresConnectionManager<NoTls>>)> = gtfs.trips.iter()
-                                            .map(|(key, trip)| ((key.clone(), feed.id.clone()), (trip, &client))).collect();
-                                            let trips_clone = trips.clone();
-                                            let trips_workers = trips_clone.into_iter().map( |((trip_id, feed_id), (trip, client))| async move {
-                                                let statement = client.prepare(format!("INSERT INTO {schemaname}.trips (onestop_feed_id, trip_id, service_id, route_id, trip_headsign, trip_short_name, shape_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT do nothing;").as_str()).await.unwrap();
+                                            for (trip_id, trip) in &gtfs.trips {
 
-                                                let stoptimestatement = client.prepare(
-                                                    format!("INSERT INTO {schemaname}.stoptimes 
-                                                    (onestop_feed_id, trip_id, stop_id, stop_sequence, 
-                                                        arrival_time, departure_time, stop_headsign, point) 
-                                                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;").as_str()).await.unwrap();
-                                                
                                                 let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());
     
                                                 titlecase_process(&mut trip_headsign);
@@ -1297,7 +1296,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     .query(
                                                         &statement,
                                                         &[
-                                                            &feed_id,
+                                                            &feed.id,
                                                                &trip.id,
                                                              &trip.service_id,
                                                             &trip.route_id,
@@ -1317,7 +1316,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         };
                                                 
     
-                                                        let stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
+                                                        let mut stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
     
                                                         titlecase_process(&mut trip_headsign);
                                                     
@@ -1326,7 +1325,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         .query(
                                                             &stoptimestatement,
                                                             &[
-                                                                &feed_id,
+                                                                &feed.id,
                                                                 &trip.id,
                                                                 &stoptime.stop.id,
                                                                 &(stoptime.stop_sequence as i32),
@@ -1340,10 +1339,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                    
                                                     
                                                 }
-                                            });
-                                            for worker in trips_workers {
-                                                let _ = tokio::join!(worker);
-                                            }
+                                            }   
                                         }
                                         
                                         

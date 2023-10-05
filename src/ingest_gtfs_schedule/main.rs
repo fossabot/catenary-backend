@@ -1,14 +1,16 @@
 use bb8::PooledConnection;
 use gtfs_structures::Route;
+use gtfs_structures::Trip;
 use serde_json::Error as SerdeError;
+use tokio_postgres::Statement;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use titlecase::titlecase;
 mod dmfr;
-use geo_postgis::ToPostgis;
 use bb8_postgres::PostgresConnectionManager;
 use futures;
+use geo_postgis::ToPostgis;
 use gtfs_structures::ContinuousPickupDropOff;
 use gtfs_structures::RouteType;
 use postgis::ewkb;
@@ -71,7 +73,11 @@ pub fn titlecase_process(string: &mut String) -> () {
     //it's not an acronym, and can be safely title cased
     if string.len() >= 7 {
         //i don't want to accidently screw up Greek, Cryllic, Chinese, Japanese, or other writing systmes
-        if string.as_str().chars().all(|s| s.is_ascii_punctuation() || s.is_ascii()) == true
+        if string
+            .as_str()
+            .chars()
+            .all(|s| s.is_ascii_punctuation() || s.is_ascii())
+            == true
         {
             *string = titlecase(string.as_str());
         }
@@ -108,6 +114,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let is_prod = arguments::parse(std::env::args())
         .unwrap()
         .get::<bool>("isprod");
+
+    let skiptrips = arguments::parse(std::env::args())
+        .unwrap()
+        .get::<bool>("skiptrips")
+        .unwrap_or_else(|| false);
 
     let schemaname = match is_prod {
         Some(s) => {
@@ -358,9 +369,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await
         .unwrap();
 
-        println!("making index");
+    println!("making index");
 
-        
     client.batch_execute(format!("
     CREATE INDEX IF NOT EXISTS gtfs_static_geom_idx ON {schemaname}.shapes USING GIST (linestring);
 
@@ -377,14 +387,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await
         .unwrap();
 
-        println!("make static hulls...");
+    println!("make static hulls...");
 
-        client.batch_execute(format!("
+    client
+        .batch_execute(
+            format!(
+                "
         
-        CREATE INDEX IF NOT EXISTS static_hulls ON {schemaname}.static_feeds USING GIST (hull);").as_str(),
+        CREATE INDEX IF NOT EXISTS static_hulls ON {schemaname}.static_feeds USING GIST (hull);"
             )
-            .await
-            .unwrap();
+            .as_str(),
+        )
+        .await
+        .unwrap();
 
     println!("Finished making database");
 
@@ -436,7 +451,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 Ok(dmfrinfo) => {
                                     dmfrinfo.feeds.iter().for_each(|feed| {
                                         for eachoperator in feed.operators.clone().into_iter() {
-                                            if feed_to_operator_pairs_hashmap.contains_key(&feed.id) {
+                                            if feed_to_operator_pairs_hashmap.contains_key(&feed.id)
+                                            {
                                                 let mut existing_operator_pairs =
                                                     feed_to_operator_pairs_hashmap
                                                         .get(&feed.id)
@@ -895,7 +911,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         }
         
 
-                                       let prepared_shapes = client.prepare(format!("INSERT INTO {schemaname}.shapes (onestop_feed_id, shape_id, linestring, color, text_color, routes, route_type,route_label) VALUES ($1, $2, $3, $4, $5, $6,$7,$8) ON CONFLICT do nothing;").as_str()).await.unwrap();
+                                       let prepared_shapes = client.prepare(format!("INSERT INTO {schemaname}.shapes
+                                        (onestop_feed_id, shape_id, linestring, color, text_color, routes, route_type,route_label) 
+                                        VALUES ($1, $2, $3, $4, $5, $6,$7,$8) ON CONFLICT (onestop_feed_id, shape_id) DO UPDATE set
+                                        linestring = $3,
+                                        color = $4,
+                                        text_color = $5,
+                                        routes = $6,
+                                        route_type = $7,
+                                        route_label = $8
+                                        ;").as_str()).await.unwrap();
                                         
                                         for (shape_id, shape) in &gtfs.shapes {
 
@@ -986,7 +1011,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                     nameoflinelametro = "adb8bf";
                                                                 },
                                                                 _ => {
-    
+                                                                    nameoflinelametro = "e16710";
                                                                 }
                                                                
                                                             }
@@ -1014,6 +1039,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 "f-9-amtrak~amtrakcalifornia~amtrakcharteredvehicle" => {
                                                     String::from("1772ac")
                                                 },
+                                                "f-9q5b-longbeachtransit" => {
+                                                    match shape_to_color_lookup.get(shape_id) {
+                                                        Some(color) => {
+                                                            if (color.r == 255 && color.g == 255 && color.b == 255) {
+                                                                String::from("801f3a")
+                                                            } else {
+                                                                println!("long beach shape not white? {:?}", color);
+                                                                format!("{:02x}{:02x}{:02x}",
+                                                            color.r, color.g, color.b
+                                                            )
+                                                            }
+                                                        },
+                                                        None => String::from("801f3a")
+                                                    }
+                                                }
                                                 _ => {
                                                     match shape_to_color_lookup.get(shape_id) {
                                                         Some(color) => format!(
@@ -1189,7 +1229,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             )
                                             VALUES (
                                                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-                                            ) ON CONFLICT do nothing;
+                                            ) ON CONFLICT (onestop_feed_id, route_id) do update set 
+                                            color = $10,
+                                            text_color = $11;
                                             ").as_str()).await.unwrap();
                                             let mut long_name = route.long_name.clone();
                                             titlecase_process(&mut long_name);
@@ -1206,8 +1248,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     &route.url,
                                                     &route.agency_id.clone().unwrap_or_else(|| "".to_string()),
                                                     &i32::try_from(route.order.unwrap_or_else(|| 0)).ok(),
-                                                    &(colour_correction::fix_background_colour_rgb(route.color).to_string()),
-                                                    &(colour_correction::fix_foreground_colour_rgb(route.color, route.text_color).to_string()),
+                                                    &(colour_correction::fix_background_colour_rgb_feed(&feed_id,route.color).to_string()),
+                                                    &(colour_correction::fix_foreground_colour_rgb_feed(&feed_id, route.color, route.text_color).to_string()),
                                                     &(match route.continuous_pickup {
                                                         ContinuousPickupDropOff::Continuous => 0,
                                                         ContinuousPickupDropOff::NotAvailable => 1,
@@ -1227,75 +1269,84 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             ).await.unwrap();
                                         });
                                         for worker in route_workers {
-                                            let _ = worker.await;
+                                            let _ = tokio::join!(worker);
                                         }
                                         println!("Uploading {} trips", gtfs.trips.len());
                                          
                                         let time = std::time::Instant::now();
 
-                                        let statement = client.prepare(format!("INSERT INTO {schemaname}.trips (onestop_feed_id, trip_id, service_id, route_id, trip_headsign, trip_short_name, shape_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT do nothing;").as_str()).await.unwrap();
 
-                                        let stoptimestatement = client.prepare(
-                                            format!("INSERT INTO {schemaname}.stoptimes 
-                                            (onestop_feed_id, trip_id, stop_id, stop_sequence, 
-                                                arrival_time, departure_time, stop_headsign, point) 
-                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;").as_str()).await.unwrap();
-                                        
-                                        //let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
-                                        for (trip_id, trip) in &gtfs.trips {
+                                        if skiptrips == false {
+                                            let trips: HashMap<(String, String), (&Trip, &PooledConnection<PostgresConnectionManager<NoTls>>)> = gtfs.trips.iter()
+                                            .map(|(key, trip)| ((key.clone(), feed.id.clone()), (trip, &client))).collect();
+                                            let trips_clone = trips.clone();
+                                            let trips_workers = trips_clone.into_iter().map( |((trip_id, feed_id), (trip, client))| async move {
+                                                let statement = client.prepare(format!("INSERT INTO {schemaname}.trips (onestop_feed_id, trip_id, service_id, route_id, trip_headsign, trip_short_name, shape_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT do nothing;").as_str()).await.unwrap();
 
-                                            let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());
-
-                                            titlecase_process(&mut trip_headsign);
-
-                                            client
-                                                .query(
-                                                    &statement,
-                                                    &[
-                                                        &feed.id,
-                                                           &trip.id,
-                                                         &trip.service_id,
-                                                        &trip.route_id,
-                                          &trip_headsign,
-                                                  &trip.trip_short_name.clone().unwrap_or_else(|| "".to_string()),
-                                                  &trip.shape_id.clone().unwrap_or_else(|| "".to_string()),
-                                                       ],
-                                                ).await.unwrap();
-
-                                            for stoptime in &trip.stop_times {
-
-                                                if stoptime.stop.latitude.is_some() && stoptime.stop.longitude.is_some() {
-                                                    let point = ewkb::Point {
-                                                        x: stoptime.stop.longitude.unwrap(),
-                                                        y: stoptime.stop.latitude.unwrap(),
-                                                        srid: Some(4326),
-                                                    };
-                                            
-
-                                                    let stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
-
-                                                    titlecase_process(&mut trip_headsign);
+                                                let stoptimestatement = client.prepare(
+                                                    format!("INSERT INTO {schemaname}.stoptimes 
+                                                    (onestop_feed_id, trip_id, stop_id, stop_sequence, 
+                                                        arrival_time, departure_time, stop_headsign, point) 
+                                                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;").as_str()).await.unwrap();
                                                 
-                                                    if stoptime.arrival_time.is_some() && stoptime.departure_time.is_some() {
-                                                        client
+                                                let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());
+    
+                                                titlecase_process(&mut trip_headsign);
+    
+                                                client
                                                     .query(
-                                                        &stoptimestatement,
+                                                        &statement,
                                                         &[
-                                                            &feed.id,
-                                                            &trip.id,
-                                                            &stoptime.stop.id,
-                                                            &(stoptime.stop_sequence as i32),
-                                                            &toi64(&stoptime.arrival_time),
-                                                            &toi64(&stoptime.departure_time),
-                                                            &stop_headsign,
-                                                            &point
-                                                        ],
+                                                            &feed_id,
+                                                               &trip.id,
+                                                             &trip.service_id,
+                                                            &trip.route_id,
+                                              &trip_headsign,
+                                                      &trip.trip_short_name.clone().unwrap_or_else(|| "".to_string()),
+                                                      &trip.shape_id.clone().unwrap_or_else(|| "".to_string()),
+                                                           ],
                                                     ).await.unwrap();
-                                                    }    }
-                                               
+    
+                                                for stoptime in &trip.stop_times {
+    
+                                                    if stoptime.stop.latitude.is_some() && stoptime.stop.longitude.is_some() {
+                                                        let point = ewkb::Point {
+                                                            x: stoptime.stop.longitude.unwrap(),
+                                                            y: stoptime.stop.latitude.unwrap(),
+                                                            srid: Some(4326),
+                                                        };
                                                 
+    
+                                                        let stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
+    
+                                                        titlecase_process(&mut trip_headsign);
+                                                    
+                                                        if stoptime.arrival_time.is_some() && stoptime.departure_time.is_some() {
+                                                            client
+                                                        .query(
+                                                            &stoptimestatement,
+                                                            &[
+                                                                &feed_id,
+                                                                &trip.id,
+                                                                &stoptime.stop.id,
+                                                                &(stoptime.stop_sequence as i32),
+                                                                &toi64(&stoptime.arrival_time),
+                                                                &toi64(&stoptime.departure_time),
+                                                                &stop_headsign,
+                                                                &point
+                                                            ],
+                                                        ).await.unwrap();
+                                                        }    }
+                                                   
+                                                    
+                                                }
+                                            });
+                                            for worker in trips_workers {
+                                                let _ = tokio::join!(worker);
                                             }
                                         }
+                                        
+                                        
                                     
                                         println!("{} with {} trips took {}ms", feed.id, gtfs.trips.len(), time.elapsed().as_millis());
 
@@ -1328,7 +1379,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 &point
                                             ]).await.unwrap();
                                            }
-                                        }              
+                                        }
                                         let start_hull_time = chrono::prelude::Utc::now().timestamp_nanos_opt().unwrap();
 
                                         //convex hull calcs
@@ -1364,31 +1415,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                     srid: Some(4326),
                                                 }).collect::<Vec<ewkb::Point>>()
                                             };
-                                             */
+                                            */
 
-
-                                            let hull_postgres_line = geo_types::LineString::from(hull.iter().map(|s| geo_types::Coordinate {
-                                                x: s.0,
-                                                y: s.1,
-                                            }).collect::<Vec<geo_types::Coordinate>>());
-
-                                            let hull_postgres = geo_types::Polygon::new(
-                                                hull_postgres_line,
-                                                vec![]
-                                            )
+                                            let hull_postgres = hull
                                             .to_postgis_wgs84();
 
                                         if gtfs.routes.len() > 0 as usize {
                                             let _ = client.query(
                                                 format!("INSERT INTO {schemaname}.static_feeds (onestop_feed_id, max_lat, max_lon, min_lat, min_lon, operators, operators_to_gtfs_ids, hull)
                                             
-                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT do nothing;").as_str(), &[
+                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (onestop_feed_id) do update set operators = $6, operators_to_gtfs_ids = $7, hull = $8;").as_str(), &[
                                             &feed.id,
                                             &most_lat,
                                             &most_lon,
                                             &least_lat,
                                             &least_lon,
-                                            &operator_id_list,
+                                            &operator_pairs_hashmap.iter().map(|(a,b)| a).collect::<Vec<&String>>(),
                                             &operator_pairs_hashmap,
                                             &hull_postgres
                                         ]).await.unwrap();
@@ -1404,7 +1446,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                              VALUES ($1, $2, $3, $4) ON CONFLICT do nothing;").as_str(), &[
                                             &feed.id,
                                             &feed.name,
-                                            &operator_id_list,
+                                            &operator_pairs_hashmap.iter().map(|(a,b)| a).collect::<Vec<&String>>(),
                                             &operator_pairs_hashmap
                                              ]).await.unwrap();
                         },
@@ -1457,7 +1499,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                         match feed.spec {
                             dmfr::FeedSpec::Gtfs => {
-                                if !feeds_to_discard.contains(&x.feed_onestop_id.clone().unwrap().as_str())
+                                if !feeds_to_discard
+                                    .contains(&x.feed_onestop_id.clone().unwrap().as_str())
                                 {
                                     gtfs_static_feeds.insert(
                                         x.feed_onestop_id.clone().unwrap(),

@@ -1310,44 +1310,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 reqquery_vec.push(a_trip);
                                             }
                                             for (trip_id, trip) in &gtfs.trips {
-
                                                 let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());
-    
                                                 titlecase_process(&mut trip_headsign);
-    
-                                                client
-                                                    .query(
-                                                        &statement,
-                                                        &[
-                                                            &feed.id,
-                                                               &trip.id,
-                                                             &trip.service_id,
-                                                            &trip.route_id,
-                                              &trip_headsign,
-                                                      &trip.trip_short_name.clone().unwrap_or_else(|| "".to_string()),
-                                                      &trip.shape_id.clone().unwrap_or_else(|| "".to_string()),
-                                                           ],
-                                                    ).await.unwrap();
-    
+                                                client.query(
+                                                    &statement,
+                                            &[
+                                                        &feed.id,
+                                                        &trip.id,
+                                                        &trip.service_id,
+                                                        &trip.route_id,
+                                                        &trip_headsign,
+                                                        &trip.trip_short_name.clone().unwrap_or_else(|| "".to_string()),
+                                                        &trip.shape_id.clone().unwrap_or_else(|| "".to_string()),
+                                                    ]).await.unwrap();
                                                 for stoptime in &trip.stop_times {
-    
                                                     if stoptime.stop.latitude.is_some() && stoptime.stop.longitude.is_some() {
                                                         let point = ewkb::Point {
                                                             x: stoptime.stop.longitude.unwrap(),
                                                             y: stoptime.stop.latitude.unwrap(),
                                                             srid: Some(4326),
                                                         };
-                                                
-    
-                                                        let mut stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
-    
+                                                        let stop_headsign = stoptime.stop_headsign.clone().unwrap_or_else(|| "".to_string());
                                                         titlecase_process(&mut trip_headsign);
-                                                    
                                                         if stoptime.arrival_time.is_some() && stoptime.departure_time.is_some() {
-                                                            client
-                                                        .query(
-                                                            &stoptimestatement,
-                                                            &[
+                                                            client.query(
+                                                                &stoptimestatement,
+                                                                &[
                                                                 &feed.id,
                                                                 &trip.id,
                                                                 &stoptime.stop.id,
@@ -1356,11 +1344,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                 &toi64(&stoptime.departure_time),
                                                                 &stop_headsign,
                                                                 &point
-                                                            ],
-                                                        ).await.unwrap();
-                                                        }    }
-                                                   
-                                                    
+                                                            ]).await.unwrap();
+                                                        }    
+                                                    }
                                                 }
                                             }   
                                         }

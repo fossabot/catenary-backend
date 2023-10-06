@@ -1,3 +1,4 @@
+use bb8::Pool;
 use bb8::PooledConnection;
 use gtfs_structures::Route;
 use gtfs_structures::Trip;
@@ -1286,6 +1287,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;").as_str()).await.unwrap();
 
                                         if skiptrips == false {
+                                            #[derive(Clone)]
+                                            struct Args {
+                                                feed_id: String,
+                                                statement: Statement,
+                                                stoptimestatement: Statement,
+                                                trip: Trip,
+                                                trip_id: String,
+                                                pool: Pool<PostgresConnectionManager<NoTls>>,
+                                            }
+                                            let mut reqquery_vec: Vec<Args> = Vec::new();
+                                            for (trip_id, trip) in &gtfs.trips {
+                                                let a_trip = Args {
+                                                    feed_id: feed.clone().id,
+                                                    statement: statement.clone(),
+                                                    stoptimestatement: stoptimestatement.clone(),
+                                                    trip: trip.clone(),
+                                                    trip_id: trip_id.clone(),
+                                                    pool: pool.clone(),
+                                                    
+                                                };
+                                                reqquery_vec.push(a_trip);
+                                            }
                                             for (trip_id, trip) in &gtfs.trips {
 
                                                 let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());

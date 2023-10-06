@@ -1309,13 +1309,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 };
                                                 reqquery_vec.push(a_trip);
                                             }
-                                            for (trip_id, trip) in &gtfs.trips {
+                                            let fetches = futures::stream::iter(reqquery_vec.clone().into_iter().map(|trips| async move {
+
+                                                let client = trips.pool.get().await.unwrap();
+                                                let statement = trips.statement;
+                                                let stoptimestatement = trips.stoptimestatement;
+                                                let trip = trips.trip;
+                                                let feed_id = trips.feed_id;
                                                 let mut trip_headsign = trip.trip_headsign.clone().unwrap_or_else(|| "".to_string());
                                                 titlecase_process(&mut trip_headsign);
                                                 client.query(
                                                     &statement,
                                             &[
-                                                        &feed.id,
+                                                        &feed_id,
                                                         &trip.id,
                                                         &trip.service_id,
                                                         &trip.route_id,
@@ -1336,7 +1342,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                             client.query(
                                                                 &stoptimestatement,
                                                                 &[
-                                                                &feed.id,
+                                                                &feed_id,
                                                                 &trip.id,
                                                                 &stoptime.stop.id,
                                                                 &(stoptime.stop_sequence as i32),
@@ -1348,7 +1354,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         }    
                                                     }
                                                 }
-                                            }   
+                                            }));
                                         }
                                         
                                         

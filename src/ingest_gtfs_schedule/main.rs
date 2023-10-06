@@ -1354,7 +1354,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         }    
                                                     }
                                                 }
-                                            }));
+                                            })).buffer_unordered(256)
+                                            .collect::<Vec<()>>();
+                                            fetches.await;;
                                         }
                                         
                                         

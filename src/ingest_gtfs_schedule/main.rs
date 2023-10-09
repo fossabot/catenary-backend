@@ -1,5 +1,6 @@
 use bb8::Pool;
 use bb8::PooledConnection;
+use futures::StreamExt;
 use gtfs_structures::Route;
 use gtfs_structures::Trip;
 use serde_json::Error as SerdeError;

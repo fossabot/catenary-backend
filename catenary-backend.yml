@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment.catenary-backend
+  labels: 
+    app: catenary-backend
+spec:
+  template:
+    metadata:
+      labels:
+        app: catenary-backend
+      spec:
+        containers:
+          - name: catenary-backend
+            image: localhost/catenary-backend
+            ports:
+              - containerPort: 5401
+          - name: martin
+            image: localhost/martin
+            ports:
+              - containerPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment.statics-db
+spec:
+  affinity:
+    s
+  template:
+    metadata:
+      labels:
+        app: statics-db
+        spec:
+          containers:
+            - name: statics-db
+              image: postgres/16
+              ports:
+                - containerPort: 5432

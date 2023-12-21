@@ -15,25 +15,34 @@ spec:
             image: localhost/catenary-backend
             ports:
               - containerPort: 5401
+            command: ["./catenary-backend"]
+            args: ["--postgres",""]
           - name: martin
             image: localhost/martin
             ports:
               - containerPort: 3000
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: deployment.statics-db
+  name: statics-db
 spec:
-  affinity:
-    s
   template:
     metadata:
       labels:
         app: statics-db
-        spec:
-          containers:
-            - name: statics-db
-              image: postgres/16
-              ports:
-                - containerPort: 5432
+    spec:
+      containers: 
+        - name: statics-db
+          image: postgres/16
+          ports:
+            - containerPort: 5432
+---
+apiVersion: v1
+kind: Secret
+metadata: 
+  name: secret.catenary-backend
+type: kubernetes.io/basic-auth
+stringData:
+  username: statics
+  password: 

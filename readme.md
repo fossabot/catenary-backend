@@ -1,4 +1,6 @@
 ## Install Dependencies
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FCatenaryMaps%2Fcatenary-backend.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FCatenaryMaps%2Fcatenary-backend?ref=badge_shield)
+
 
 ```bash
 sudo apt install protobuf-compiler build-essential gcc pkg-config libssl-dev postgresql unzip wget
@@ -78,3 +80,7 @@ For unix users, running `git config core.hooksPath .githooks` is required.
 Pull requests will not be merged without this.
 
 No option exists for Windows users at the moment. Please try WSL Ubuntu for the moment. We're working on adding this.
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FCatenaryMaps%2Fcatenary-backend.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FCatenaryMaps%2Fcatenary-backend?ref=badge_large)
